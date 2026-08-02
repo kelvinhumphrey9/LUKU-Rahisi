@@ -1,0 +1,9 @@
+
+> Tanzania Electricity Purchase App@0.1.0 dev /app
+> vite --host 0.0.0.0 --port 3000
+
+
+  VITE v6.3.5  ready in 251 ms
+
+  ➜  Local:   http://localhost:3000/
+  ➜  Network: http://192.168.0.2:3000/
