@@ -1,0 +1,41 @@
+# Palette's Journal - Critical Learnings Only
+
+## 2026-07-22 - Hybrid Loading State Accessibility & Interactive Recovery
+**Learning:** Initial application load and loading screens are often treated as static visual placeholders, lacking screen-reader support (e.g., `accessibilityLiveRegion="polite"`) and interactive recovery options (e.g. `Pressable` manual retries). For assistive technologies and keyboard-only users, this creates a black-hole state with no announcement of active loading or progress.
+**Action:** Always wrap initial load / fallback states in dynamic live regions, use specific `accessibilityLabel` annotations, and supply an elegant, keyboard-navigable and highly tactile retry/refresh trigger with state-driven visual feedback (such as color shifts, scale changes on press, and explicit disabled states).
+
+## 2026-07-23 - Micro-UX feedback and Keyboards Focus States
+**Learning:** Manual triggers for status re-evaluation can leave users unsure whether the action succeeded if the visual state reverts instantly to the previous resting state. Additionally, keyboard users struggle to navigate web applications when default focus indicators are hidden by standard resets without a high-visibility replacement.
+**Action:** Always follow up asynchronous state checks with clear, delightful, and accessible inline feedback (such as an alert-role badge) indicating success. Combine this with explicit, custom focus rings (e.g., using `Pressable`'s `focused` state) to preserve full accessibility on both mobile and web hybrid architectures.
+
+## 2026-07-25 - Localized UX and Cultural Accessibility (LUKU)
+**Learning:** Providing high-quality Swahili (Kiswahili) localization in Tanzanian utilities like electricity purchase (LUKU) significantly lowers cognitive load and builds trust for regional users. Screen readers must be supplied with corresponding translated `accessibilityLabel` attributes to prevent English-centric voice engines from mispronouncing local terms.
+**Action:** Always map local terminology (e.g. LUKU) in translations and ensure all interactive elements switch both visible texts and screen-reader accessibility labels simultaneously.
+
+## 2026-07-26 - Safe Hybrid Clipboard Access
+**Learning:** Top-level package imports like `expo-clipboard` can contain raw JSX or non-web standard components (such as `ClipboardPasteButton.js` in JS format) that break Vite web bundlers. Directly importing core module replacements like `Clipboard` from `react-native` will also cause iOS/Android crashes on newer React Native versions where it was completely removed from core.
+**Action:** Always wrap modern Clipboard actions in platform conditional checks (e.g., `Platform.OS === 'web'`), fall back to web native `navigator.clipboard`, and use dynamic `require` at runtime only on native device checks to completely prevent bundler parsing/runtime failures.
+
+## 2026-07-28 - Tooltip/Title Attributes in TypeScript-Strict Native-Web Hybrid
+**Learning:** Adding web-standard hover-tooltips (the `title` attribute) on `Pressable` components in a shared mobile/web React Native codebase triggers strict TS compiler errors because React Native's static `PressableProps` interfaces do not define `title`.
+**Action:** Safely inject standard browser attributes (like `title` or custom ARIA regions) by spreading a casted object, e.g., `{...({ title: tooltipText } as any)}`. This preserves compile-time safety and prevents compilation crashes on the web target while successfully injecting the attribute into the DOM.
+
+## 2026-07-29 - Segment Completion Checklist for Long Numerical Codes
+**Learning:** Entering long, critical codes (such as a 20-digit LUKU utility token) onto physical keypad hardware from a screen is extremely error-prone as users easily lose their place mid-entry. Adding a tactile, interactive checkpoint feature to the token badges allows users to click or tap segments to mark them as completed, acting as an active visual checklist.
+**Action:** Always represent long sequential segments as interactive checkboxes (with corresponding ARIA states and localized check state readouts) so physical keypad entry can be tracked step-by-step with state-driven visual feedback (such as text strike-throughs and background color shifts).
+
+## 2026-08-02 - Chunked Visual Scanning & Keypad Mode for Utility Tokens
+**Learning:** Utility purchase applications often present long numerical tokens (e.g. 20-digit LUKU tokens) in plain text or with static hyphens. This increases cognitive load and transcription error rates when users manually type the token onto physical utility keypads, as most keypads do not have hyphen buttons.
+**Action:** Present long tokens as visually segmented, distinct 4-digit groups (cards/badges) to aid manual visual scanning. Pair this with a highly visible "Keypad Mode" toggle that hides hyphens/separators and updates the clipboard copy utility to export a clean, raw numeric string for direct manual or automated use.
+
+## 2026-08-04 - Preventing Perpetual Loading Spinner Anti-pattern
+**Learning:** Rendering a spinning progress loader continuously after initial assets or server state diagnostic checks have resolved confuses users, making them think the interface is still stuck or waiting for background tasks.
+**Action:** Always transition the loading spinner directly into a stable, resting badge state (e.g. '✓ All systems operational' / '✓ Mifumo yote inafanya kazi kikamilifu') within the exact same visual slot, hiding any misleading 'Loading...' or 'Rechecking...' textual indicators.
+
+## 2026-08-08 - Segment Checklist Reset and Completion Feedback
+**Learning:** When users keep track of long manual numerical codes using visual segment checks, they might need to easily clear their progress, start over, or verify that all segments are successfully checked. Lacking an intuitive, keyboard-accessible reset trigger and progress readout increases mental backtracking overhead.
+**Action:** Always provide a clear, dynamically rendered progress status message paired with a high-contrast, focusable and localized "Reset progress" action whenever any segment in the checklist has been modified.
+
+## 2026-08-09 - Interactive Segment Checklist Progress and Dynamic Feedback
+**Learning:** For multi-segment visual checklists, showing only a final completion banner leaves a feedback vacuum during the intermediate entry states. Providing a real-time, localized progress readout (e.g. "3/5 entered" / "3/5 imewekwa") with distinct color-shifts provides helpful reassurance and lowers visual layout shift anxiety.
+**Action:** Always include live, dynamic progress ratios in addition to final success indicators on multi-step/multi-segment checkpoints to ensure users have real-time confirmation of their exact tracking state.
