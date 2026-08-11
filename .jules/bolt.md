@@ -1,0 +1,3 @@
+## 2026-02-02 - Component Extraction for Isolate Rendering
+**Learning:** In shared React Native Web / Vite codebases, keeping complex nested state machines (like toggling help tooltips, managing clipboard transition states, and setting up native clipboard timeouts) colocated inside sub-components rather than the top-level App component drastically reduces parent rendering cascades. By wrapping sub-components in `React.memo` and hoisting global static variables (like `MOCK_TOKEN`) outside component scopes, rendering and virtual DOM reconciliation are avoided entirely when parent layout or polling status states change.
+**Action:** Always identify localized state clusters and isolate them into dedicated `React.memo` functional components.
