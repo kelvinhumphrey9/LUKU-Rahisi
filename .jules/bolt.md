@@ -1,0 +1,3 @@
+## 2026-02-02 - Hoist Static Constants and Accessibility States to Module Scope
+**Learning:** Instantiating static accessibility objects (e.g. `{ selected: true }` or `{ disabled: false }`) inside React functional components or inside `useMemo` hooks adds unnecessary allocation overhead and React hook tracking cost on every render cycle. Hoisting them to module-level constants provides stable referential equality with O(1) pointer checks.
+**Action:** Always hoist static object literals and constant values to module scope outside of functional components whenever they do not depend on component state or props.
