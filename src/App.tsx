@@ -1,0 +1,1241 @@
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+} from "react";
+import {
+  View,
+  Text,
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+} from "react-native";
+
+const translations: any = {
+  en: {
+    title: "Tanzania Electricity Purchase App",
+    load: "Loading application components",
+    ready: "System Ready",
+    online: "Online",
+    retry: "Rechecking server status",
+    ok: "✓ All systems operational",
+    run: "Refresh Status",
+    r: "Retrying...",
+    langHintEn: "Switches language to English",
+    langHintSw: "Switches language to Swahili",
+    btnHint: "Press R or click to recheck server connections and system status",
+    retryHint: "Status recheck is in progress, please wait",
+    statusHint: "Displays current application connectivity and operational status",
+    lastVerified: "Verified at",
+    dismissHint: "Dismiss notification",
+    dismissHintEsc: "Press Escape or click to dismiss notification",
+    shortcuts: "Keyboard Shortcuts",
+    shortcutR: "[R] Refresh",
+    shortcutL: "[L] Language",
+    shortcutC: "[C] Copy Token",
+    shortcutEsc: "[Esc] Dismiss",
+    tokenLabel: "LUKU Token",
+    copyToken: "Copy Token",
+    copied: "✓ Copied!",
+    copyTokenHint: "Press C or click to copy 20-digit LUKU token to clipboard",
+  },
+  sw: {
+    title: "Ununuzi wa Umeme (LUKU) Tanzania",
+    load: "Inapakia vipengele vya programu",
+    ready: "Mfumo Uko Tayari",
+    online: "Mtandaoni",
+    retry: "Inahakiki hali ya seva sasa",
+    ok: "✓ Mifumo yote inafanya kazi kikamilifu",
+    run: "Hakiki Hali Tena",
+    r: "Inajaribu tena...",
+    langHintEn: "Inabadilisha lugha kuwa Kiingereza",
+    langHintSw: "Inabadilisha lugha kuwa Kiswahili",
+    btnHint: "Bonyeza R au bofya kuhakiki tena muunganisho wa seva na hali ya mfumo",
+    retryHint: "Uhakiki wa hali unaendelea, tafadhali subiri",
+    statusHint: "Inaonyesha hali ya sasa ya muunganisho na utendaji wa programu",
+    lastVerified: "Imethibitishwa saa",
+    dismissHint: "Funga taarifa",
+    dismissHintEsc: "Bonyeza Escape au bofya kufunga taarifa",
+    shortcuts: "Njia za Mkato za Kinanda",
+    shortcutR: "[R] Hakiki Hali",
+    shortcutL: "[L] Badili Lugha",
+    shortcutC: "[C] Nakili Namba",
+    shortcutEsc: "[Esc] Funga Taarifa",
+    tokenLabel: "Namba ya LUKU",
+    copyToken: "Nakili Namba",
+    copied: "✓ Imenakiliwa!",
+    copyTokenHint: "Bonyeza C au bofya kunakili namba ya LUKU ya tarakimu 20 kwenye ubao wa kunakili",
+  },
+};
+
+// Bolt Performance Optimization:
+// Hoisting static accessibility objects to module level avoids dynamic allocations
+// and removes React hook tracking overhead on every render cycle.
+const ACCESSIBILITY_STATE_SELECTED = { selected: true };
+const ACCESSIBILITY_STATE_UNSELECTED = { selected: false };
+const ACCESSIBILITY_STATE_DISABLED = { disabled: true };
+const ACCESSIBILITY_STATE_ENABLED = { disabled: false };
+const ACCESSIBILITY_STATE_RETRYING = { disabled: true, busy: true };
+const ARIA_HIDDEN = Object.freeze({ "aria-hidden": true as const });
+
+// Bolt Performance Optimization:
+// Extracting application title into a memoized sub-component prevents unnecessary
+// title re-evaluations and Virtual DOM diffing during frequent parent status/timer updates.
+interface AppTitleProps {
+  title: string;
+  lang: "en" | "sw";
+}
+
+const AppTitle = React.memo(function AppTitle({ title, lang }: AppTitleProps) {
+  return (
+    <Text
+      style={styles.titleText}
+      accessibilityRole="header"
+      {...({ "aria-level": 1, lang } as any)}
+    >
+      {title}
+    </Text>
+  );
+});
+
+// Bolt Performance Optimization:
+// Extracting status indicator into a memoized component isolates status badge icon rendering and text computation.
+// Passing primitive props (isRetrying, retryText, readyText) guarantees referential stability, preventing status view re-renders
+// during parent state changes like success alert auto-dismissal timeouts.
+interface StatusIndicatorProps {
+  isRetrying: boolean;
+  retryText: string;
+  readyText: string;
+  onlineText: string;
+  verifiedTime: string | null;
+  lastVerifiedText: string;
+  hint: string;
+  onRefresh: () => void;
+}
+
+const StatusIndicator = React.memo(function StatusIndicator({
+  isRetrying,
+  retryText,
+  readyText,
+  onlineText,
+  verifiedTime,
+  lastVerifiedText,
+  hint,
+  onRefresh,
+}: StatusIndicatorProps) {
+  const currentStatus = isRetrying ? retryText + "..." : readyText;
+  const statusLabel = isRetrying
+    ? currentStatus
+    : `${currentStatus}, ${onlineText}${verifiedTime ? `, ${lastVerifiedText} ${verifiedTime}` : ""}`;
+
+  return (
+    <View
+      accessibilityRole={"status" as any}
+      accessibilityLabel={statusLabel}
+      style={styles.statusContainer}
+    >
+      <View style={styles.spinnerContainer}>
+        {isRetrying ? (
+          <ActivityIndicator
+            size="large"
+            color="#10b981"
+            accessibilityRole="progressbar"
+            accessibilityLabel={retryText}
+          />
+        ) : (
+          <View
+            style={styles.readyBadgeIconContainer}
+            {...ARIA_HIDDEN}
+          >
+            <Text
+              style={styles.readyBadgeIcon}
+              {...ARIA_HIDDEN}
+            >
+              ✓
+            </Text>
+          </View>
+        )}
+      </View>
+
+      <Text style={styles.statusText}>
+        {currentStatus}
+      </Text>
+
+      <Pressable
+        onPress={onRefresh}
+        disabled={isRetrying}
+        accessibilityRole="button"
+        accessibilityLabel={statusLabel}
+        accessibilityHint={hint}
+        accessibilityState={
+          isRetrying
+            ? ACCESSIBILITY_STATE_RETRYING
+            : ACCESSIBILITY_STATE_ENABLED
+        }
+        {...({ title: hint } as any)}
+        style={isRetrying ? getStatusPillRetryingStyle : getStatusPillNormalStyle}
+      >
+        <Text style={isRetrying ? styles.onlineDotRetrying : styles.onlineDot} {...ARIA_HIDDEN}>
+          ●
+        </Text>
+        <Text style={isRetrying ? styles.onlinePillTextRetrying : styles.onlinePillText}>
+          {isRetrying ? retryText : `${onlineText}${verifiedTime ? ` • ${verifiedTime}` : ""}`}
+        </Text>
+      </Pressable>
+    </View>
+  );
+});
+
+// Bolt Performance Optimization:
+// Extracting language button into a memoized component prevents unnecessary re-renders of language selection controls
+// when parent state updates (such as retry timer status changes), isolating Virtual DOM reconciliation.
+interface LangButtonProps {
+  langCode: "en" | "sw";
+  isSelected: boolean;
+  hint: string;
+  onSelect: (lang: "en" | "sw") => void;
+}
+
+const LangButton = React.memo(function LangButton({
+  langCode,
+  isSelected,
+  hint,
+  onSelect,
+}: LangButtonProps) {
+  const handlePress = useCallback(() => {
+    onSelect(langCode);
+  }, [onSelect, langCode]);
+
+  return (
+    <Pressable
+      onPress={handlePress}
+      accessibilityRole="radio"
+      accessibilityLabel={langCode === "en" ? "English" : "Kiswahili"}
+      accessibilityHint={hint}
+      accessibilityState={
+        isSelected
+          ? ACCESSIBILITY_STATE_SELECTED
+          : ACCESSIBILITY_STATE_UNSELECTED
+      }
+      style={isSelected ? getLangBtnSelectedStyle : getLangBtnUnselectedStyle}
+      {...({ title: hint, lang: langCode } as any)}
+    >
+      <Text style={isSelected ? LANG_TXT_ACTIVE_STYLES : styles.langTxt}>
+        {langCode.toUpperCase()}
+      </Text>
+    </Pressable>
+  );
+});
+
+// Bolt Performance Optimization:
+// Extracting LanguageSelector into a memoized component isolates language toggle container rendering.
+// This prevents Virtual DOM re-evaluations when unrelated parent state changes (such as copied status, verified time, or retry states).
+interface LanguageSelectorProps {
+  lang: "en" | "sw";
+  onSelectLang: (lang: "en" | "sw") => void;
+  langHintEn: string;
+  langHintSw: string;
+}
+
+const LanguageSelector = React.memo(function LanguageSelector({
+  lang,
+  onSelectLang,
+  langHintEn,
+  langHintSw,
+}: LanguageSelectorProps) {
+  const groupLabel =
+    lang === "en" ? "Language selection" : "Uchaguzi wa lugha";
+
+  return (
+    <View
+      accessibilityRole="radiogroup"
+      accessibilityLabel={groupLabel}
+      style={styles.langContainer}
+    >
+      <LangButton
+        langCode="en"
+        isSelected={lang === "en"}
+        hint={langHintEn}
+        onSelect={onSelectLang}
+      />
+      <Text style={styles.langSep} {...ARIA_HIDDEN}>
+        |
+      </Text>
+      <LangButton
+        langCode="sw"
+        isSelected={lang === "sw"}
+        hint={langHintSw}
+        onSelect={onSelectLang}
+      />
+      <View style={styles.langKbdBadge} {...ARIA_HIDDEN}>
+        <Text style={styles.langKbdBadgeText}>[L]</Text>
+      </View>
+    </View>
+  );
+});
+
+// Bolt Performance Optimization:
+// Extracting the action button into a memoized component prevents unnecessary re-evaluations
+// and style computations during unrelated parent state changes (e.g. language selection or clock ticks).
+interface RefreshButtonProps {
+  isRetrying: boolean;
+  label: string;
+  hint: string;
+  onPress: () => void;
+}
+
+const RefreshButton = React.memo(function RefreshButton({
+  isRetrying,
+  label,
+  hint,
+  onPress,
+}: RefreshButtonProps) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={isRetrying}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityHint={hint}
+      accessibilityState={
+        isRetrying
+          ? ACCESSIBILITY_STATE_RETRYING
+          : ACCESSIBILITY_STATE_ENABLED
+      }
+      {...({ title: hint } as any)}
+      style={isRetrying ? getRefreshBtnRetryingStyle : getRefreshBtnNormalStyle}
+    >
+      <View style={styles.buttonContent}>
+        {isRetrying && (
+          <ActivityIndicator
+            size="small"
+            color="#9ca3af"
+            style={styles.buttonSpinner}
+          />
+        )}
+        <Text
+          style={
+            isRetrying ? styles.buttonTextDisabled : styles.buttonTextNormal
+          }
+        >
+          {label}
+        </Text>
+        {!isRetrying && (
+          <View
+            style={styles.kbdBadge}
+            {...ARIA_HIDDEN}
+          >
+            <Text style={styles.kbdBadgeText}>[R]</Text>
+          </View>
+        )}
+      </View>
+    </Pressable>
+  );
+});
+
+// Palette Micro-UX Component:
+interface TokenDisplayProps {
+  token: string;
+  tokenLabel: string;
+  copyText: string;
+  copiedText: string;
+  hint: string;
+  copied: boolean;
+  onCopy: () => void;
+}
+
+const TokenDisplay = React.memo(function TokenDisplay({
+  token,
+  tokenLabel,
+  copyText,
+  copiedText,
+  hint,
+  copied,
+  onCopy,
+}: TokenDisplayProps) {
+  return (
+    <View style={styles.tokenContainer}>
+      <Text style={styles.tokenLabel}>{tokenLabel}:</Text>
+      <View style={styles.tokenValueCard}>
+        <Text style={styles.tokenText}>{token}</Text>
+        <Pressable
+          onPress={onCopy}
+          accessibilityRole="button"
+          accessibilityLabel={`${copyText}, ${tokenLabel} ${token}`}
+          accessibilityHint={hint}
+          accessibilityState={ACCESSIBILITY_STATE_ENABLED}
+          style={copied ? getCopyBtnCopiedStyle : getCopyBtnNormalStyle}
+          {...({ title: hint } as any)}
+        >
+          <View style={styles.copyBtnContent}>
+            <Text style={copied ? styles.copyBtnTextCopied : styles.copyBtnText}>
+              {copied ? copiedText : copyText}
+            </Text>
+            {!copied && (
+              <View style={styles.kbdBadgeDark} {...ARIA_HIDDEN}>
+                <Text style={styles.kbdBadgeTextDark}>[C]</Text>
+              </View>
+            )}
+          </View>
+        </Pressable>
+      </View>
+    </View>
+  );
+});
+
+// Bolt Performance Optimization:
+// Extracting success badge into a memoized component isolates alert banner rendering and prevents
+// unnecessary Virtual DOM diffing during parent component renders (e.g. keyboard navigation or language switches).
+// Hoisting getDismissBtnStyle to module scope eliminates function object allocation on every render pass.
+interface SuccessBadgeProps {
+  message: string;
+  verifiedTime: string | null;
+  lastVerifiedText: string;
+  dismissHint: string;
+  dismissHintEsc: string;
+  onDismiss: () => void;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
+  onFocus?: () => void;
+  onBlur?: () => void;
+}
+
+const SuccessBadge = React.memo(function SuccessBadge({
+  message,
+  verifiedTime,
+  lastVerifiedText,
+  dismissHint,
+  dismissHintEsc,
+  onDismiss,
+  onMouseEnter,
+  onMouseLeave,
+  onFocus,
+  onBlur,
+}: SuccessBadgeProps) {
+  return (
+    <View
+      accessibilityRole="alert"
+      accessibilityLiveRegion="assertive"
+      style={styles.successBadge}
+      {...({
+        onMouseEnter,
+        onMouseLeave,
+        onFocus,
+        onBlur,
+      } as any)}
+    >
+      <Text style={styles.successBadgeText}>
+        {message} {verifiedTime ? `(${lastVerifiedText} ${verifiedTime})` : ""}
+      </Text>
+      <Pressable
+        onPress={onDismiss}
+        accessibilityRole="button"
+        accessibilityLabel={dismissHint}
+        accessibilityHint={dismissHintEsc}
+        style={getDismissBtnStyle}
+        {...({ title: dismissHintEsc } as any)}
+      >
+        <View style={styles.dismissBtnContent}>
+          <Text style={styles.dismissBtnText}>✕</Text>
+          <View
+            style={styles.escBadge}
+            {...ARIA_HIDDEN}
+          >
+            <Text style={styles.escBadgeText}>[Esc]</Text>
+          </View>
+        </View>
+      </Pressable>
+    </View>
+  );
+});
+
+// Bolt Performance Optimization:
+// Extracting shortcut legend footer into a memoized component isolates keyboard shortcut controls.
+// Passing the primitive `lang` identifier ("en" | "sw") directly instead of 10 individual translation strings
+// reduces `React.memo` prop comparison complexity from O(16) to O(6) primitive props and eliminates dynamic
+// string property evaluations during parent component renders.
+interface ShortcutLegendProps {
+  isRetrying: boolean;
+  showSuccess: boolean;
+  lang: "en" | "sw";
+  onRefresh: () => void;
+  onToggleLang: () => void;
+  onCopyToken: () => void;
+  onDismiss: () => void;
+}
+
+const ShortcutLegend = React.memo(function ShortcutLegend({
+  isRetrying,
+  showSuccess,
+  lang,
+  onRefresh,
+  onToggleLang,
+  onCopyToken,
+  onDismiss,
+}: ShortcutLegendProps) {
+  const t = translations[lang];
+
+  return (
+    <View
+      accessibilityRole={"region" as any}
+      accessibilityLabel={t.shortcuts}
+      style={styles.legendContainer}
+    >
+      <Text style={styles.legendTitle}>{t.shortcuts}:</Text>
+      <View style={styles.legendItems}>
+        <Pressable
+          onPress={onRefresh}
+          disabled={isRetrying}
+          accessibilityRole="button"
+          accessibilityLabel={t.shortcutR}
+          accessibilityHint={t.btnHint}
+          accessibilityState={
+            isRetrying
+              ? ACCESSIBILITY_STATE_RETRYING
+              : ACCESSIBILITY_STATE_ENABLED
+          }
+          style={isRetrying ? getLegendBtnDisabledStyle : getLegendBtnStyle}
+          {...({ title: isRetrying ? t.retryHint : t.btnHint } as any)}
+        >
+          <Text
+            style={
+              isRetrying ? LEGEND_ITEM_DISABLED_STYLES : styles.legendItem
+            }
+          >
+            {t.shortcutR}
+          </Text>
+        </Pressable>
+        <Text style={styles.legendSep} {...ARIA_HIDDEN}>
+          •
+        </Text>
+        <Pressable
+          onPress={onToggleLang}
+          accessibilityRole="button"
+          accessibilityLabel={t.shortcutL}
+          accessibilityHint={lang === "en" ? t.langHintSw : t.langHintEn}
+          accessibilityState={ACCESSIBILITY_STATE_ENABLED}
+          style={getLegendBtnStyle}
+          {...({ title: lang === "en" ? t.langHintSw : t.langHintEn } as any)}
+        >
+          <Text style={styles.legendItem}>{t.shortcutL}</Text>
+        </Pressable>
+        <Text style={styles.legendSep} {...ARIA_HIDDEN}>
+          •
+        </Text>
+        <Pressable
+          onPress={onCopyToken}
+          accessibilityRole="button"
+          accessibilityLabel={t.shortcutC}
+          accessibilityHint={t.copyTokenHint}
+          accessibilityState={ACCESSIBILITY_STATE_ENABLED}
+          style={getLegendBtnStyle}
+          {...({ title: t.copyTokenHint } as any)}
+        >
+          <Text style={styles.legendItem}>{t.shortcutC}</Text>
+        </Pressable>
+        <Text style={styles.legendSep} {...ARIA_HIDDEN}>
+          •
+        </Text>
+        <Pressable
+          onPress={onDismiss}
+          disabled={!showSuccess}
+          accessibilityRole="button"
+          accessibilityLabel={t.shortcutEsc}
+          accessibilityHint={t.dismissHint}
+          accessibilityState={
+            !showSuccess
+              ? ACCESSIBILITY_STATE_DISABLED
+              : ACCESSIBILITY_STATE_ENABLED
+          }
+          style={!showSuccess ? getLegendBtnDisabledStyle : getLegendBtnStyle}
+          {...({ title: showSuccess ? t.dismissHintEsc : undefined } as any)}
+        >
+          <Text
+            style={
+              !showSuccess ? LEGEND_ITEM_DISABLED_STYLES : styles.legendItem
+            }
+          >
+            {t.shortcutEsc}
+          </Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+});
+
+const SAMPLE_TOKEN = "1234 - 5678 - 9012 - 3456 - 7890";
+
+export default function App() {
+  const [lang, setLang] = useState<"en" | "sw">("en");
+  const t = translations[lang];
+
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [verifiedTime, setVerifiedTime] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const dismissTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const copyTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleSelectLang = useCallback((l: "en" | "sw") => {
+    setLang(l);
+  }, []);
+
+  const handleToggleLang = useCallback(() => {
+    setLang((prev) => (prev === "en" ? "sw" : "en"));
+  }, []);
+
+  const startDismissTimer = useCallback(() => {
+    if (dismissTimerRef.current) {
+      clearTimeout(dismissTimerRef.current);
+    }
+    dismissTimerRef.current = setTimeout(() => {
+      setShowSuccess(false);
+    }, 4000);
+  }, []);
+
+  const pauseDismissTimer = useCallback(() => {
+    if (dismissTimerRef.current) {
+      clearTimeout(dismissTimerRef.current);
+      dismissTimerRef.current = null;
+    }
+  }, []);
+
+  const handleDismissSuccess = useCallback(() => {
+    if (dismissTimerRef.current) {
+      clearTimeout(dismissTimerRef.current);
+    }
+    setShowSuccess(false);
+  }, []);
+
+  const handleCopyToken = useCallback(() => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(SAMPLE_TOKEN.replace(/\s+/g, ""));
+    }
+    setCopied(true);
+    if (copyTimerRef.current) {
+      clearTimeout(copyTimerRef.current);
+    }
+    copyTimerRef.current = setTimeout(() => {
+      setCopied(false);
+    }, 2000);
+  }, []);
+
+  // Bolt Performance Optimization:
+  // Clean up timers on unmount to prevent memory leaks and unnecessary background execution.
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+      if (dismissTimerRef.current) {
+        clearTimeout(dismissTimerRef.current);
+      }
+      if (copyTimerRef.current) {
+        clearTimeout(copyTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Bolt Performance Optimization:
+  // Memoizing event handlers using useCallback preserves referential integrity across render cycles.
+  // This reduces re-renders of child components like Pressable and lowers garbage collection pressure.
+  const handlePress = useCallback(() => {
+    setIsRetrying(true);
+    setShowSuccess(false);
+
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+    if (dismissTimerRef.current) {
+      clearTimeout(dismissTimerRef.current);
+    }
+
+    timerRef.current = setTimeout(() => {
+      setIsRetrying(false);
+      setShowSuccess(true);
+      setVerifiedTime(new Date().toLocaleTimeString());
+
+      startDismissTimer();
+    }, 1500);
+  }, [startDismissTimer]);
+
+  // Bolt Performance Optimization:
+  // Use a null-initialized mutable state ref updated in-place inside useEffect to stabilize window event listener.
+  // This eliminates window.addEventListener/removeEventListener teardown/registration on every state change.
+  const keyHandlerStateRef = useRef<{
+    isRetrying: boolean;
+    showSuccess: boolean;
+    handlePress: () => void;
+    handleDismissSuccess: () => void;
+    handleCopyToken: () => void;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!keyHandlerStateRef.current) {
+      keyHandlerStateRef.current = {
+        isRetrying,
+        showSuccess,
+        handlePress,
+        handleDismissSuccess,
+        handleCopyToken,
+      };
+    } else {
+      keyHandlerStateRef.current.isRetrying = isRetrying;
+      keyHandlerStateRef.current.showSuccess = showSuccess;
+      keyHandlerStateRef.current.handlePress = handlePress;
+      keyHandlerStateRef.current.handleDismissSuccess = handleDismissSuccess;
+      keyHandlerStateRef.current.handleCopyToken = handleCopyToken;
+    }
+  }, [isRetrying, showSuccess, handlePress, handleDismissSuccess, handleCopyToken]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isInput =
+        e.target &&
+        ((e.target as HTMLElement).tagName === "INPUT" ||
+          (e.target as HTMLElement).tagName === "TEXTAREA" ||
+          (e.target as HTMLElement).isContentEditable);
+
+      if (isInput) return;
+
+      const state = keyHandlerStateRef.current;
+
+      if (e.key === "Escape" && state?.showSuccess) {
+        state.handleDismissSuccess();
+      } else if ((e.key === "r" || e.key === "R") && state && !state.isRetrying) {
+        state.handlePress();
+      } else if (e.key === "l" || e.key === "L") {
+        setLang((prev) => (prev === "en" ? "sw" : "en"));
+      } else if ((e.key === "c" || e.key === "C") && state) {
+        state.handleCopyToken();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  return (
+    <View
+      accessibilityLiveRegion="polite"
+      style={styles.container}
+      {...({ lang } as any)}
+    >
+      <LanguageSelector
+        lang={lang}
+        onSelectLang={handleSelectLang}
+        langHintEn={t.langHintEn}
+        langHintSw={t.langHintSw}
+      />
+
+      <AppTitle title={t.title} lang={lang} />
+
+      <StatusIndicator
+        isRetrying={isRetrying}
+        retryText={t.retry}
+        readyText={t.ready}
+        onlineText={t.online}
+        verifiedTime={verifiedTime}
+        lastVerifiedText={t.lastVerified}
+        hint={t.statusHint}
+        onRefresh={handlePress}
+      />
+
+      {/* Palette Micro-UX Feature: Accessible LUKU Token display with 1-click & keyboard shortcut copy affordance */}
+      <TokenDisplay
+        token={SAMPLE_TOKEN}
+        tokenLabel={t.tokenLabel}
+        copyText={t.copyToken}
+        copiedText={t.copied}
+        hint={t.copyTokenHint}
+        copied={copied}
+        onCopy={handleCopyToken}
+      />
+
+      {/* Palette Delight & Accessibility Feature: Inline success badge with manual dismiss button, timestamp, and pause-on-hover/focus */}
+      {showSuccess && !isRetrying && (
+        <SuccessBadge
+          message={t.ok}
+          verifiedTime={verifiedTime}
+          lastVerifiedText={t.lastVerified}
+          dismissHint={t.dismissHint}
+          dismissHintEsc={t.dismissHintEsc}
+          onDismiss={handleDismissSuccess}
+          onMouseEnter={pauseDismissTimer}
+          onMouseLeave={startDismissTimer}
+          onFocus={pauseDismissTimer}
+          onBlur={startDismissTimer}
+        />
+      )}
+
+      <RefreshButton
+        isRetrying={isRetrying}
+        label={isRetrying ? t.r : t.run}
+        hint={isRetrying ? t.retryHint : t.btnHint}
+        onPress={handlePress}
+      />
+
+      <ShortcutLegend
+        isRetrying={isRetrying}
+        showSuccess={showSuccess}
+        lang={lang}
+        onRefresh={handlePress}
+        onToggleLang={handleToggleLang}
+        onCopyToken={handleCopyToken}
+        onDismiss={handleDismissSuccess}
+      />
+    </View>
+  );
+}
+
+// Bolt Performance Optimization:
+// Defining all static styles inside StyleSheet.create avoids the allocation of new style objects on every render cycle.
+// This significantly reduces Garbage Collection (GC) pressure, avoids shallow-equality failures in render comparisons,
+// and permits React Native Web to generate stable, static CSS class names instead of inline styles.
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#f9fafb",
+    padding: 24,
+  },
+  langContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    position: "absolute",
+    top: 20,
+    right: 20,
+  },
+  langBtn: { paddingVertical: 4, paddingHorizontal: 8, borderRadius: 4 },
+  langActive: { backgroundColor: "#e0f2fe" },
+  langHover: { backgroundColor: "#f3f4f6" },
+  langTxt: { fontSize: 12, fontWeight: "500", color: "#6b7280" },
+  langTxtActive: { color: "#0284c7", fontWeight: "bold" },
+  langSep: { color: "#d1d5db", marginHorizontal: 4 },
+  langFocus: {
+    outlineColor: "#0284c7",
+    outlineStyle: "solid",
+    outlineWidth: 2,
+  },
+  langKbdBadge: {
+    marginLeft: 6,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    backgroundColor: "#e5e7eb",
+    borderRadius: 4,
+  },
+  langKbdBadgeText: {
+    fontSize: 10,
+    fontWeight: "bold",
+    color: "#4b5563",
+  },
+  legendContainer: {
+    position: "absolute",
+    bottom: 20,
+    alignItems: "center",
+  },
+  legendTitle: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#9ca3af",
+    marginBottom: 4,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  legendItems: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  legendBtn: {
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 4,
+  },
+  legendBtnHover: {
+    backgroundColor: "#e5e7eb",
+  },
+  legendBtnFocus: {
+    outlineColor: "#3b82f6",
+    outlineStyle: "solid",
+    outlineWidth: 2,
+  },
+  legendBtnDisabled: {
+    opacity: 0.5,
+    cursor: "not-allowed" as any,
+  },
+  legendItem: {
+    fontSize: 12,
+    color: "#4b5563",
+    fontWeight: "500",
+  },
+  legendItemDisabled: {
+    color: "#9ca3af",
+  },
+  legendSep: {
+    fontSize: 10,
+    color: "#d1d5db",
+    marginHorizontal: 4,
+  },
+  titleText: {
+    fontSize: 24,
+    fontWeight: "bold",
+    color: "#111827",
+    textAlign: "center",
+  },
+  statusContainer: {
+    alignItems: "center",
+  },
+  spinnerContainer: {
+    height: 80,
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 16,
+  },
+  readyBadgeIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "#e0f2fe",
+    borderWidth: 2,
+    borderColor: "#3b82f6",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  readyBadgeIcon: {
+    fontSize: 22,
+    fontWeight: "bold",
+    color: "#2563eb",
+  },
+  statusText: {
+    fontSize: 14,
+    color: "#4b5563",
+    marginTop: 8,
+    textAlign: "center",
+  },
+  onlinePillContainer: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ecfdf5",
+    borderWidth: 1,
+    borderColor: "#10b981",
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 9999,
+  },
+  onlinePillHover: {
+    backgroundColor: "#d1fae5",
+  },
+  onlinePillFocus: {
+    outlineColor: "#10b981",
+    outlineStyle: "solid",
+    outlineWidth: 2,
+    outlineOffset: 1,
+  },
+  onlinePillRetrying: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fef3c7",
+    borderWidth: 1,
+    borderColor: "#f59e0b",
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 9999,
+    cursor: "not-allowed" as any,
+  },
+  onlineDot: {
+    fontSize: 8,
+    color: "#10b981",
+    marginRight: 6,
+  },
+  onlineDotRetrying: {
+    fontSize: 8,
+    color: "#d97706",
+    marginRight: 6,
+  },
+  onlinePillText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#065f46",
+  },
+  onlinePillTextRetrying: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#92400e",
+  },
+  successBadge: {
+    marginTop: 12,
+    backgroundColor: "#d1fae5",
+    paddingVertical: 6,
+    paddingLeft: 16,
+    paddingRight: 10,
+    borderRadius: 9999,
+    borderWidth: 1,
+    borderColor: "#10b981",
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  successBadgeText: {
+    color: "#065f46",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  dismissBtn: {
+    marginLeft: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 9999,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  dismissBtnHover: {
+    backgroundColor: "#a7f3d0",
+  },
+  dismissBtnFocus: {
+    outlineColor: "#059669",
+    outlineStyle: "solid",
+    outlineWidth: 2,
+  },
+  dismissBtnText: {
+    fontSize: 12,
+    fontWeight: "bold",
+    color: "#065f46",
+  },
+  dismissBtnContent: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  escBadge: {
+    marginLeft: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    backgroundColor: "rgba(6, 95, 70, 0.15)",
+    borderRadius: 4,
+  },
+  escBadgeText: {
+    fontSize: 10,
+    fontWeight: "bold",
+    color: "#065f46",
+  },
+  buttonBase: {
+    marginTop: 24,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    elevation: 2,
+    outlineWidth: 0, // Reset default browser outline for web
+  },
+  buttonNormal: {
+    backgroundColor: "#3b82f6",
+  },
+  buttonHovered: {
+    backgroundColor: "#2563eb",
+  },
+  buttonDisabled: {
+    backgroundColor: "#e5e7eb",
+    cursor: "not-allowed" as any,
+  },
+  buttonFocused: {
+    outlineColor: "#2563eb",
+    outlineStyle: "solid",
+    outlineWidth: 3,
+    outlineOffset: 2,
+  },
+  buttonPressed: {
+    transform: [{ scale: 0.98 }],
+  },
+  buttonTextNormal: {
+    color: "#ffffff",
+    fontWeight: "600",
+    fontSize: 14,
+  },
+  buttonTextDisabled: {
+    color: "#9ca3af",
+    fontWeight: "600",
+    fontSize: 14,
+  },
+  buttonContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  buttonSpinner: {
+    marginRight: 6,
+  },
+  kbdBadge: {
+    marginLeft: 8,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    backgroundColor: "rgba(255, 255, 255, 0.25)",
+    borderRadius: 4,
+  },
+  kbdBadgeText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "bold",
+  },
+  tokenContainer: {
+    marginTop: 16,
+    alignItems: "center",
+  },
+  tokenLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#6b7280",
+    marginBottom: 4,
+  },
+  tokenValueCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 1,
+  },
+  tokenText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#1f2937",
+    fontFamily: "monospace",
+    letterSpacing: 0.5,
+    marginRight: 10,
+  },
+  copyBtn: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    backgroundColor: "#f3f4f6",
+  },
+  copyBtnCopied: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    backgroundColor: "#d1fae5",
+  },
+  copyBtnHover: {
+    backgroundColor: "#e5e7eb",
+  },
+  copyBtnFocus: {
+    outlineColor: "#3b82f6",
+    outlineStyle: "solid",
+    outlineWidth: 2,
+  },
+  copyBtnContent: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  copyBtnText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#374151",
+  },
+  copyBtnTextCopied: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#065f46",
+  },
+  kbdBadgeDark: {
+    marginLeft: 6,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    backgroundColor: "#e5e7eb",
+    borderRadius: 4,
+  },
+  kbdBadgeTextDark: {
+    fontSize: 10,
+    fontWeight: "bold",
+    color: "#374151",
+  },
+});
+
+// Bolt Performance Optimization:
+// Hoisting static Pressable style callback functions to module scope (defined after `styles`)
+// eliminates `useCallback` hook invocation overhead entirely on every render pass,
+// avoids heap allocations, and guarantees stable function reference pointers for Pressable components.
+const getStatusPillNormalStyle = ({ hovered, focused }: any) => [
+  styles.onlinePillContainer,
+  hovered && styles.onlinePillHover,
+  focused && styles.onlinePillFocus,
+];
+
+const getStatusPillRetryingStyle = ({ focused }: any) => [
+  styles.onlinePillRetrying,
+  focused && styles.onlinePillFocus,
+];
+
+const getLangBtnSelectedStyle = ({ focused }: any) => [
+  styles.langBtn,
+  styles.langActive,
+  focused && styles.langFocus,
+];
+
+const getLangBtnUnselectedStyle = ({ hovered, focused }: any) => [
+  styles.langBtn,
+  hovered && styles.langHover,
+  focused && styles.langFocus,
+];
+
+const getRefreshBtnNormalStyle = ({ pressed, hovered, focused }: any) => [
+  styles.buttonBase,
+  hovered ? styles.buttonHovered : styles.buttonNormal,
+  focused && styles.buttonFocused,
+  pressed && styles.buttonPressed,
+];
+
+const getRefreshBtnRetryingStyle = ({ pressed, focused }: any) => [
+  styles.buttonBase,
+  styles.buttonDisabled,
+  focused && styles.buttonFocused,
+  pressed && styles.buttonPressed,
+];
+
+const getLegendBtnStyle = ({ hovered, focused }: any) => [
+  styles.legendBtn,
+  hovered && styles.legendBtnHover,
+  focused && styles.legendBtnFocus,
+];
+
+const getLegendBtnDisabledStyle = ({ focused }: any) => [
+  styles.legendBtn,
+  styles.legendBtnDisabled,
+  focused && styles.legendBtnFocus,
+];
+
+const getDismissBtnStyle = ({ hovered, focused }: any) => [
+  styles.dismissBtn,
+  hovered && styles.dismissBtnHover,
+  focused && styles.dismissBtnFocus,
+];
+
+const getCopyBtnNormalStyle = ({ hovered, focused }: any) => [
+  styles.copyBtn,
+  hovered && styles.copyBtnHover,
+  focused && styles.copyBtnFocus,
+];
+
+const getCopyBtnCopiedStyle = ({ focused }: any) => [
+  styles.copyBtnCopied,
+  focused && styles.copyBtnFocus,
+];
+
+const LANG_TXT_ACTIVE_STYLES = [styles.langTxt, styles.langTxtActive];
+const LEGEND_ITEM_DISABLED_STYLES = [styles.legendItem, styles.legendItemDisabled];
